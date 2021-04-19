@@ -1,63 +1,34 @@
-type MyRecord: record{
-	url: string;
-	reply_code: count;
-};
 
-global Response: table[addr] of set[MyRecord];
-global Interval: table[int] of time;
-global index: int = 0;
-global mark: int = 0; # Index of last end of one interval
+event zeek_init()
+    {
+    local a1 = SumStats::Reducer($stream="all", $apply=set(SumStats::SUM));
+    local a2 = SumStats::Reducer($stream="404", $apply=set(SumStats::SUM));
+    local a3 = SumStats::Reducer($stream="404url", $apply=set(SumStats::UNIQUE));
+    SumStats::create([$name="work",
+                      $epoch=10min,
+                      $reducers=set(a1,a2,a3),
+                      $epoch_result(ts: time, key: SumStats::Key, result: SumStats::Result) =
+                        {
+                        	local b1 = result["all"];
+                        	local b2 = result["404"];
+	        	         	local b3 = result["404url"];
+	        	         	if (b2$sum>2)
+	        	            {
+	        	             	if ((b2$sum/b1$sum)>0.2)
+	        	             	{
+	        	 	            	if((b3$unique/b2$sum)>0.5)
+	        		               	{
+	        		            		print fmt("%s is a scanner with %.0f scan attemps on %d urls", key$host, b2$sum, b3$unique);
+                                	}
+	        	              	}
+	        	             }
+                        }]);
+    }
 
 event http_reply(c: connection, version: string, code: count, reason: string) {
-	local orig_addr: addr = c$id$orig_h;
-	local New_record = MyRecord($url = c$http$uri, $reply_code = code);
-	local begin: time = c$start_time; 
-	Interval[index] = begin;
-	local passtime: double = |Interval[index]|-|Interval[mark]|;
-	local totalresp: int = 0; #total response number
-	local totalnum: int = 0; #total 404 number
-	local uninum: int = 0; #unique 404 number
-	local totalratio: double = 0.0; #total 404 ratio
-	local uniratio: double = 0.0; #unique 404 ratio
-	
-	#存储十分钟内的所有orig_h，url和code
-	if(passtime <= |10min|){
-		if(orig_addr in Response){
-			add Response[orig_addr][New_record];
-		}
-		else{
-			Response[orig_addr] = set(New_record);
-		}
-	}
-	
-	#超出十分钟时，对上一组内容进行404检测分析
-	if(passtime > |10min|){ 
-		local url_404: set[string]; #存放404的url	
-		mark = index - 1;
-		for(orig_addr in Response){
-			for(re in Response[orig_addr]){
-				totalresp = totalresp + 1;
-				if(re$reply_code == 404){
-					totalnum = totalnum + 1;
-					add url_404[re$url];
-				}
-			}
-			uninum = |url_404|;
-			totalratio = totalnum / totalresp;
-			uniratio = uninum / totalnum;
-			if(totalnum > 2){
-				if(totalratio > 0.2){
-					if(uniratio > 0.5){
-						print fmt("%s is a scaner with %d scan attemps on %d urls",orig_addr,totalnum,uninum);
-					}
-				}
-			}
-			for(url in url_404){
-				delete url_404[url];
-			}
-			delete Response[orig_addr];
-		}
-		Response[orig_addr] = set(New_record);
-	}
-	index = index + 1;
+    SumStats::observe("all", SumStats::Key($host=c$id$orig_h), SumStats::Observation($num=1));
+    if (code == 404) {
+        SumStats::observe("404", SumStats::Key($host=c$id$orig_h), SumStats::Observation($num=1));
+        SumStats::observe("404url", SumStats::Key($host=c$id$orig_h), SumStats::Observation($str=c$http$uri));
+    }
 }
