@@ -1,4 +1,3 @@
-
 event zeek_init()
     {
     local a1 = SumStats::Reducer($stream="all", $apply=set(SumStats::SUM));
@@ -28,7 +27,8 @@ event zeek_init()
     }
 
 
-event http_reply(c: connection, version: string, code: count, reason: string) {
+event http_reply(c: connection, version: string, code: count, reason: string)
+{
     SumStats::observe("all", SumStats::Key($host=c$id$orig_h), SumStats::Observation($num=1));
     if (code == 404) {
         SumStats::observe("404", SumStats::Key($host=c$id$orig_h), SumStats::Observation($num=1));
